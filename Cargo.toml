@@ -1,0 +1,21 @@
+[package]
+name = "telegram_drive"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = [
+    "telegram_drive_core"
+]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name="main"
+path = "src/bin/main.rs"
+
+[dependencies]
+telegram_drive_core = {path ="telegram_drive_core"}
+serde_json = {version = "1.0.95"}
+serde = {version = "1.0.159", features = ["serde_derive", "derive"]}
