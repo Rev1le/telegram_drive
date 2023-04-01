@@ -1,0 +1,10 @@
+[package]
+name = "telegram_drive_file"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+md5 = "0.7.0"
+uuid = { verison = "1.3.0", features = ["v4"] }
