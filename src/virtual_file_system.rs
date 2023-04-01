@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::fmt::{Display, Formatter};
+use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Deserialize};
+use serde_json::Error;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct FSOption {
@@ -23,6 +25,7 @@ pub struct VFSFile {
     pub name: String,
     pub extension: String,
     pub build_metafile: String,
+    pub parts_name: Vec<String>,
     pub metadata : Metadata
 }
 
@@ -40,6 +43,7 @@ pub struct VirtualFileSystem {
 }
 
 impl VirtualFileSystem {
+
     pub fn new(options: FSOption) -> Self {
         Self {
             dirs: HashMap::from([
@@ -56,12 +60,13 @@ impl VirtualFileSystem {
         }
     }
 
-    pub fn get_fs_as_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string(&self)
-    }
+    pub fn get_file(&self, path: &Path) -> Result<&VFSFile, VFSError> {
+        let res_node = self.get_fs_node(path)?;
 
-    pub fn print_fs(&self) {
-        println!("{:#?}", self.dirs);
+        return match res_node {
+            FileSystemNode::File(file) => Ok(file),
+            FileSystemNode::Folder(_) => return Err(VFSError::FileNotFound)
+        }
     }
 
     pub fn get_mut_file(&mut self, path: &Path) -> Result<&mut VFSFile, VFSError> {
@@ -70,7 +75,17 @@ impl VirtualFileSystem {
 
         return match res_node {
             FileSystemNode::File(file) => Ok(file),
-            FileSystemNode::Folder(_) => return Err(VFSError::Test)
+            FileSystemNode::Folder(_) => return Err(VFSError::FileNotFound)
+        }
+    }
+
+    pub fn get_folder(&self, path: &Path) -> Result<&VFSFolder, VFSError> {
+
+        let res_node = self.get_fs_node(path)?;
+
+        return match res_node {
+            FileSystemNode::File(_) => Err(VFSError::FolderNotFound),
+            FileSystemNode::Folder(folder) => Ok(folder)
         }
     }
 
@@ -79,7 +94,7 @@ impl VirtualFileSystem {
         let res_node = self.get_mut_fs_node(path)?;
 
         return match res_node {
-            FileSystemNode::File(_) => Err(VFSError::Test),
+            FileSystemNode::File(_) => Err(VFSError::FolderNotFound),
             FileSystemNode::Folder(folder) => Ok(folder)
         }
     }
@@ -92,7 +107,7 @@ impl VirtualFileSystem {
             FileSystemNode::Folder(folder) => {
 
                 if folder.children.contains_key(&file.name) {
-                    return Err(VFSError::Test);
+                    return Err(VFSError::FileAlreadyExists);
                 }
 
                 folder.children.insert(
@@ -102,7 +117,7 @@ impl VirtualFileSystem {
 
                 Ok(())
             }
-            FileSystemNode::File { .. } => Err(VFSError::Test)
+            FileSystemNode::File { .. } => Err(VFSError::PathError)
         }
     }
 
@@ -111,6 +126,11 @@ impl VirtualFileSystem {
 
         return match folder_for_add {
             FileSystemNode::Folder(fol) => {
+
+                if fol.children.contains_key(&folder.name) {
+                    return Err(VFSError::FolderAlreadyExists);
+                }
+
                 fol.children.insert(
                     folder.name.clone(),
                     FileSystemNode::Folder(folder)
@@ -119,6 +139,34 @@ impl VirtualFileSystem {
             }
             FileSystemNode::File { .. } => Err(VFSError::Test)
         }
+    }
+
+    pub fn remove_node(&mut self, path: &Path) -> Result<(), VFSError> {
+        let mut path = PathBuf::from(path);
+        let remove_name = path
+            .iter()
+            .last()
+            .ok_or(VFSError::PathError)?.to_string_lossy().to_string();
+        path.pop();
+
+        let res_node = self.get_mut_fs_node(&path)?;
+
+        match res_node {
+            FileSystemNode::File(_) => return Err(
+                VFSError::NodeNotRemove(
+                    Box::new(VFSError::FolderNotFound)
+                )
+            ),
+            FileSystemNode::Folder(folder) => {
+                folder.children.remove(&remove_name).ok_or(
+                    VFSError::NodeNotRemove(
+                        Box::new(VFSError::NodeNotFound)
+                    )
+                )?;
+            }
+        }
+
+        Ok(())
     }
 
     fn get_mut_fs_node(&mut self, path: &Path) -> Result<&mut FileSystemNode, VFSError> {
@@ -131,25 +179,63 @@ impl VirtualFileSystem {
         for path_part in path_iter {
             let path_part = &*path_part.to_string_lossy();
 
-            match output_node.ok_or(VFSError::Test)? {
+            match output_node.ok_or(VFSError::PathError)? {
 
                 &mut FileSystemNode::Folder (ref mut folder) => {
                     output_node = folder.children.get_mut(path_part);
                 },
 
-                _ => return Err(VFSError::Test) //return Some(file).ok_or(VFSError::Test)
+                _ => return Err(VFSError::PathError)
             }
         }
 
-        return output_node.ok_or(VFSError::Test);
+        return output_node.ok_or(VFSError::PathError);
     }
 
-    fn get_fs_node(&mut self, path: &Path) -> Result<&FileSystemNode, VFSError> {
-        return self.get_mut_fs_node(path).map(|node| &*node)
+    fn get_fs_node(&self, path: &Path) -> Result<&FileSystemNode, VFSError> {
+        let mut path_iter = path.into_iter();
+        let mut output_node = self.dirs.get("fs:");
+
+        path_iter.next();
+
+        for path_part in path_iter {
+
+            let path_part = &*path_part.to_string_lossy();
+
+            match output_node.ok_or(VFSError::PathError)? {
+
+                &FileSystemNode::Folder (ref folder) => {
+                    output_node = folder.children.get(path_part);
+                },
+
+                _ => return Err(VFSError::PathError)
+            }
+        }
+
+        return output_node.ok_or(VFSError::PathError);
+    }
+
+    pub fn display(&self) -> String {
+        serde_json::to_string(&self).unwrap()
     }
 }
 
 #[derive(Debug)]
 pub enum VFSError {
-    Test
+    Test,
+    NodeNotFound,
+    FolderNotFound,
+    FileNotFound,
+    NodeNotRemove(Box<dyn std::error::Error + 'static>),
+    FileAlreadyExists,
+    FolderAlreadyExists,
+    PathError,
 }
+
+impl Display for VFSError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for VFSError { }

@@ -1,20 +1,25 @@
 use std::cell::RefCell;
+use std::fs;
 use std::path::{Path, PathBuf};
 use crate::virtual_file_system::{VirtualFileSystem, FSOption, FileSystemNode, VFSError, VFSFile, VFSFolder};
-use crate::MockCloudBackend;
+use crate::{CloudBackend, MockCloudBackend};
 use crate::virtual_file_system::FileSystemNode::File;
 
-pub trait CloudBackend {
-    fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
-
-    fn download_file(&self, file_name: &str) -> Result<PathBuf, CloudError>;
-
-    fn check_file(&self, file_name: &str) -> bool;
-}
+use telegram_drive_file::*;
 
 #[derive(Debug)]
 pub enum CloudError {
-    IOError(std::io::Error)
+    IOError(std::io::Error),
+    Test
+}
+
+impl From<VFSError> for CloudError {
+    fn from(value: VFSError) -> Self {
+        return match value {
+            VFSError::Test => CloudError::Test,
+            _ => {panic!("Unsupported errors")}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -24,68 +29,86 @@ pub struct Cloud<T: CloudBackend> {
 }
 
 impl<T: CloudBackend> Cloud<T> {
+
     pub fn new(backend: T) -> Self {
         Cloud {
             fs: RefCell::new(
-                VirtualFileSystem::new(FSOption::default())
+                VirtualFileSystem::new(
+                    FSOption::default()
+                )
             ),
             backend,
         }
     }
 
-    pub fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError> {
+    pub fn get_fs_json(&self) -> String {
+        self.fs.borrow().display()
+    }
+
+    pub fn upload_file(&self, file_path: &Path, virtial_path: &Path) -> Result<(), CloudError> {
+
+        let file_path = PathBuf::from(file_path);
+
+        let path_for_save_parts = PathBuf::from("W:\\tmp_tel_drive\\");
+
+        let options_encode = Options {
+            path_for_save: Some(path_for_save_parts.clone()),
+            count_parts: None,
+            part_size: None,
+            compressed: None,
+        };
+
+        let _ = file_separation::encode_file(&file_path, options_encode).unwrap();
+
+        for entry in fs::read_dir(path_for_save_parts).unwrap() {
+            let entry_path = entry.as_ref().unwrap().path();
+
+            println!("Найден файл: {:?}", &entry_path);
+            self.backend.upload_file(entry_path.clone()).unwrap();
+        }
+
+        let _ = self.fs.borrow_mut().add_file(virtial_path, VFSFile {
+            name: "".to_string(),
+            extension: "".to_string(),
+            build_metafile: "".to_string(),
+            parts_name: vec![],
+            metadata: Default::default(),
+        });
+
         Ok(())
     }
 
-    pub fn get_fs_json(&self) -> String {
-        String::default()
-    }
+    pub fn download_file(&self, file_path: &Path) -> Result<PathBuf, CloudError> {
 
-    pub fn get_file(&self) {
-        self.fs.borrow_mut().add_file(Path::new(r"fs://"), VFSFile {
-            name: "first_file".to_string(),
-            extension: "exe".to_string(),
-            build_metafile: "".to_string(),
-            metadata: Default::default(),
-        }).unwrap();
+        let binding = self.fs.borrow();
+        let file = binding.get_file(file_path)?;
 
+        for part in &file.parts_name {
+            let _ = dbg!(self.backend.download_file(part)?);
+        }
 
-        self.fs.borrow_mut().add_folder(Path::new(r"fs://"), VFSFolder {
-            name: "test_folder".to_string(),
-            metadata: Default::default(),
-            children: Default::default(),
-        }).unwrap();
+        let metafile = dbg!(self.backend.download_file(&file.build_metafile)?);
 
-        self.fs.borrow_mut().add_file(
-            Path::new(r"fs://test_folder//"),
-            VFSFile {
-                name: "second_file".to_string(),
-                extension: "exe".to_string(),
-                build_metafile: "".to_string(),
-                metadata: Default::default(),
-            }
-        ).unwrap();
+        // объединяем файл
 
-        self.fs.borrow_mut().add_file(
-            Path::new(r"fs://test_folder//"),
-            VFSFile {
-                name: "third_file".to_string(),
-                extension: "exe".to_string(),
-                build_metafile: "".to_string(),
-                metadata: Default::default(),
-            }
-        ).unwrap();
-
-        println!("Dddd");
-
-        self.fs.borrow().print_fs();
-
-        println!("Получение файла DEBUG {:#?}", self.fs.borrow_mut().get_mut_file(Path::new(r"fs://test")));
-
-        println!("{}", self.fs.borrow().get_fs_as_json().unwrap());
-    }
-
-    pub fn download_file(&self, file_name: &str) -> Result<PathBuf, CloudError> {
         Ok(PathBuf::new())
     }
+
+    pub fn get_file(&self, path: &Path) -> Result<VFSFile, CloudError> {
+        self.fs
+            .borrow()
+            .get_file(path)
+            .map(|file| file.clone())
+            .map_err(|err|err.into())
+    }
+
+    pub fn get_folder(&self, path: &Path) -> Result<VFSFolder, CloudError> {
+        self.fs
+            .borrow()
+            .get_folder(path)
+            .map(|folder| folder.clone())
+            .map_err(|err|err.into())
+    }
 }
+
+// META файл именуется одинаково (при загрузке одинаковых файлов идет перезапись meta файла)
