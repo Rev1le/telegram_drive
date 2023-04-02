@@ -24,6 +24,7 @@ pub enum FileSystemNode {
 pub struct VFSFile {
     pub name: String,
     pub extension: String,
+    pub remote_ids: Vec<i64>,
     pub build_metafile: String,
     pub parts_name: Vec<String>,
     pub metadata : Metadata

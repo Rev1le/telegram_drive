@@ -1,8 +1,9 @@
 use std::cell::RefCell;
-use std::fs;
+use std::{fs, thread};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use crate::virtual_file_system::{VirtualFileSystem, FSOption, FileSystemNode, VFSError, VFSFile, VFSFolder};
-use crate::{CloudBackend, MockCloudBackend};
+use crate::{CloudBackend};
 use crate::virtual_file_system::FileSystemNode::File;
 
 use telegram_drive_file::*;
@@ -20,6 +21,16 @@ impl From<VFSError> for CloudError {
             _ => {panic!("Unsupported errors")}
         }
     }
+}
+
+pub trait CloudBackend {
+    fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
+
+    fn download_file(&self, file_name: &str, id: i64) -> Result<PathBuf, CloudError>;
+
+    fn check_file(&self, file_name: &str) -> bool;
+
+    fn get_remote_ids(&self) -> Vec<i64>;
 }
 
 #[derive(Debug, Clone)]
@@ -45,11 +56,11 @@ impl<T: CloudBackend> Cloud<T> {
         self.fs.borrow().display()
     }
 
-    pub fn upload_file(&self, file_path: &Path, virtial_path: &Path) -> Result<(), CloudError> {
+    pub fn upload_file(&self, file_path: &Path, virtual_path: &Path) -> Result<(), CloudError> {
 
         let file_path = PathBuf::from(file_path);
 
-        let path_for_save_parts = PathBuf::from("W:\\tmp_tel_drive\\");
+        let path_for_save_parts = PathBuf::from(r"W:\tmp_tel_drive\");
 
         let options_encode = Options {
             path_for_save: Some(path_for_save_parts.clone()),
@@ -58,22 +69,35 @@ impl<T: CloudBackend> Cloud<T> {
             compressed: None,
         };
 
-        let _ = file_separation::encode_file(&file_path, options_encode).unwrap();
+        let separation_file = file_separation::encode_file(&file_path, options_encode).unwrap();
 
-        for entry in fs::read_dir(path_for_save_parts).unwrap() {
-            let entry_path = entry.as_ref().unwrap().path();
+        let mut parts_name = vec![];
 
-            println!("Найден файл: {:?}", &entry_path);
-            self.backend.upload_file(entry_path.clone()).unwrap();
+        for part in &separation_file.parts {
+            println!("Найден файл: {:?}", part);
+            parts_name.push(part.part_file_name.clone());
+            let mut part_path = path_for_save_parts.clone();
+
+            part_path.push(part.part_file_name.clone());
+
+            self.backend.upload_file(part_path).unwrap();
         }
 
-        let _ = self.fs.borrow_mut().add_file(virtial_path, VFSFile {
-            name: "".to_string(),
-            extension: "".to_string(),
-            build_metafile: "".to_string(),
-            parts_name: vec![],
+        let mut metafile_path = path_for_save_parts.clone();
+        metafile_path.push(&separation_file.metafile);
+
+        self.backend.upload_file(metafile_path).unwrap();
+
+        let _ = self.fs.borrow_mut().add_file(virtual_path, VFSFile {
+            name: String::from("testfile"),
+            extension: separation_file.file_extension.clone(),
+            remote_ids: dbg!(self.backend.get_remote_ids()),
+            build_metafile: separation_file.metafile.clone(),
+            parts_name,
             metadata: Default::default(),
-        });
+        }).unwrap();
+
+        println!("Выгрузка файла завершена");
 
         Ok(())
     }
@@ -81,13 +105,16 @@ impl<T: CloudBackend> Cloud<T> {
     pub fn download_file(&self, file_path: &Path) -> Result<PathBuf, CloudError> {
 
         let binding = self.fs.borrow();
-        let file = binding.get_file(file_path)?;
 
-        for part in &file.parts_name {
-            let _ = dbg!(self.backend.download_file(part)?);
+        fs::write("docs.json", serde_json::to_string(&*binding).unwrap().as_bytes()).unwrap();
+
+        let file = dbg!(binding.get_file(file_path))?;
+
+        for id in &file.remote_ids {
+            let _ = dbg!(self.backend.download_file("part", *id));
         }
 
-        let metafile = dbg!(self.backend.download_file(&file.build_metafile)?);
+        //let metafile = dbg!(self.backend.download_file(&file.build_metafile)?);
 
         // объединяем файл
 
@@ -112,3 +139,16 @@ impl<T: CloudBackend> Cloud<T> {
 }
 
 // META файл именуется одинаково (при загрузке одинаковых файлов идет перезапись meta файла)
+
+/*
+let callback = |app: &TDApp| {
+            app.check_file("d");
+            if let Ok(_) = app.upload_file(PathBuf::new()) {
+                true
+            } else {
+                false
+            }
+        };
+
+        sender.send(Box::new(callback)).unwrap();
+ */
