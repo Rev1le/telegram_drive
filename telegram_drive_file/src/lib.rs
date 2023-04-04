@@ -4,14 +4,13 @@
 pub mod file_separation;
 pub mod file_assembly;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FilePart {
-    pub part_file: std::fs::File,
     pub hash_bytes: Vec<u8>,
     pub part_file_name: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CompositeFile {
     pub filename: String,
     pub file_extension: String,
@@ -20,6 +19,7 @@ pub struct CompositeFile {
     pub uuid_parts: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct Options {
     pub path_for_save: Option<std::path::PathBuf>,
     pub count_parts: Option<u8>,

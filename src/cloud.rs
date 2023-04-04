@@ -3,7 +3,6 @@ use std::{fs, thread};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use crate::virtual_file_system::{VirtualFileSystem, FSOption, FileSystemNode, VFSError, VFSFile, VFSFolder};
-use crate::{CloudBackend};
 use crate::virtual_file_system::FileSystemNode::File;
 
 use telegram_drive_file::*;
@@ -25,12 +24,8 @@ impl From<VFSError> for CloudError {
 
 pub trait CloudBackend {
     fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
-
-    fn download_file(&self, file_name: &str, id: i64) -> Result<PathBuf, CloudError>;
-
+    fn download_file(&self, file: &VFSFile) -> Result<PathBuf, CloudError>;
     fn check_file(&self, file_name: &str) -> bool;
-
-    fn get_remote_ids(&self) -> Vec<i64>;
 }
 
 #[derive(Debug, Clone)]
@@ -44,9 +39,7 @@ impl<T: CloudBackend> Cloud<T> {
     pub fn new(backend: T) -> Self {
         Cloud {
             fs: RefCell::new(
-                VirtualFileSystem::new(
-                    FSOption::default()
-                )
+                VirtualFileSystem::new(FSOption::default())
             ),
             backend,
         }
@@ -69,30 +62,37 @@ impl<T: CloudBackend> Cloud<T> {
             compressed: None,
         };
 
-        let separation_file = file_separation::encode_file(&file_path, options_encode).unwrap();
+        let separation_file = file_separation::encode_file(
+            &file_path,
+            options_encode
+        ).unwrap();
 
         let mut parts_name = vec![];
 
         for part in &separation_file.parts {
             println!("Найден файл: {:?}", part);
-            parts_name.push(part.part_file_name.clone());
-            let mut part_path = path_for_save_parts.clone();
 
+            parts_name.push(part.part_file_name.clone());
+
+            let mut part_path = path_for_save_parts.clone();
             part_path.push(part.part_file_name.clone());
 
-            self.backend.upload_file(part_path).unwrap();
+            self.backend.upload_file(part_path.clone()).unwrap();
+
+            fs::remove_file(&part_path).unwrap();
         }
 
         let mut metafile_path = path_for_save_parts.clone();
         metafile_path.push(&separation_file.metafile);
 
-        self.backend.upload_file(metafile_path).unwrap();
+        self.backend.upload_file(metafile_path.clone()).unwrap();
+
+        fs::remove_file(&metafile_path).unwrap();
 
         let _ = self.fs.borrow_mut().add_file(virtual_path, VFSFile {
-            name: String::from("testfile"),
+            name: separation_file.filename.clone(),
             extension: separation_file.file_extension.clone(),
-            remote_ids: dbg!(self.backend.get_remote_ids()),
-            build_metafile: separation_file.metafile.clone(),
+            build_metafile: PathBuf::from(separation_file.metafile.clone()).file_name().unwrap().to_string_lossy().to_string(),
             parts_name,
             metadata: Default::default(),
         }).unwrap();
@@ -104,19 +104,17 @@ impl<T: CloudBackend> Cloud<T> {
 
     pub fn download_file(&self, file_path: &Path) -> Result<PathBuf, CloudError> {
 
-        let binding = self.fs.borrow();
+        let virtual_fs = self.fs.borrow();
+        let file = dbg!(virtual_fs.get_file(file_path))?;
+        let metafile_path = self.backend.download_file(file).expect("gwgwgwg");
 
-        fs::write("docs.json", serde_json::to_string(&*binding).unwrap().as_bytes()).unwrap();
 
-        let file = dbg!(binding.get_file(file_path))?;
+        file_assembly::decode_file(
+            &metafile_path,
+            PathBuf::from(r"F:\Projects\")
+        ).expect("defoceed_File");
 
-        for id in &file.remote_ids {
-            let _ = dbg!(self.backend.download_file("part", *id));
-        }
-
-        //let metafile = dbg!(self.backend.download_file(&file.build_metafile)?);
-
-        // объединяем файл
+        //fs::remove_dir_all(r"F:\Projects\Rust\telegram_drive\td\file\documents").unwrap();
 
         Ok(PathBuf::new())
     }

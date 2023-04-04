@@ -2,6 +2,7 @@ use std::ffi::{c_double, CStr, CString, c_char};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::thread;
+use std::time::Duration;
 use serde_json::{Value, json};
 use serde::{Serialize, Deserialize};
 use telegram_drive::cloud::{Cloud, CloudError};
@@ -19,17 +20,25 @@ struct Message {
 
 fn main() {
 
-    TDApp::execute_query(r#"{"@type": "setLogVerbosityLevel", "new_verbosity_level": 1}"#).unwrap();
+    println!("{:?}", TDApp::execute_query(&json!(
+        {
+            "@type": "setLogVerbosityLevel",
+            "new_verbosity_level": 1
+        }
+    ).to_string()).unwrap());
 
     let telegram_backend = TelegramBackend::new();
     println!("Backend has been created!");
 
     let mut cloud = Cloud::new(telegram_backend);
 
-    //cloud.upload_file(Path::new(r"C:\Users\nikiy\Documents\Ch10_nonPBR.fbx"), Path::new("fs://")).unwrap();
+    cloud.upload_file(Path::new(r"C:\Users\nikiy\Downloads\PLvs8_Kv0hU.jpg"), Path::new("fs://")).unwrap();
 
-    //println!("\n\n\n\nСкачивание\n\n\n\n");
-    //cloud.download_file(Path::new(r"fs://testfile")).unwrap();
+    println!("\n\n\n\nСкачивание\n\n\n\n");
+
+    thread::sleep(Duration::new(5,0));
+
+    cloud.download_file(Path::new(r"fs://PLvs8_Kv0hU")).expect("eewewgwgw");
 
 
     loop {

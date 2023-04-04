@@ -4,6 +4,7 @@ use std::{
     path::PathBuf,
     process::ExitCode
 };
+use std::path::Path;
 use uuid::Uuid;
 
 use crate::{CompositeFile, FilePart, Options};
@@ -27,13 +28,22 @@ impl From<std::ffi::OsString> for EncodeErrors {
     }
 }
 
-pub fn encode_file(path: &PathBuf, options: Options) -> Result<(), EncodeErrors> {
+#[derive(Debug, Clone)]
+pub struct SeparationFile {
+    pub filename: String,
+    pub file_extension: String,
+    pub metafile: String,
+    pub parts: Vec<FilePart>,
+    pub options: Options
+}
+
+pub fn encode_file(path: &PathBuf, options: Options) -> Result<SeparationFile, EncodeErrors> {
 
     if !path.is_file() {
         panic!("Предоставьте путь к файлу")
     }
 
-    let path_for_save = dbg!(options.path_for_save.unwrap_or(PathBuf::new()));
+    let path_for_save = dbg!(options.clone().path_for_save.unwrap_or(PathBuf::new()));
 
     if !path_for_save.is_dir() {
         return dbg!(Err(EncodeErrors::PathParseError));
@@ -67,8 +77,9 @@ pub fn encode_file(path: &PathBuf, options: Options) -> Result<(), EncodeErrors>
 
     let mut number_part = 1;
 
+    let mut parts = vec![];
+
     while f.has_data_left()? {
-        println!("1 + часть{}", number_part);
 
         if number_part > max_count_parts {
             println!(
@@ -81,26 +92,30 @@ pub fn encode_file(path: &PathBuf, options: Options) -> Result<(), EncodeErrors>
         let buffer_bytes = f.fill_buf()?;
         let buffer_bytes_len = buffer_bytes.len();
 
-        println!("2 + часть{}", number_part);
         let part = encode_part(
             &composite_file.uuid_parts,
             number_part,
             buffer_bytes,
             &path_for_save
         )?;
-        println!("3 + часть{}", number_part);
 
-        println!("4 + часть{}", number_part);
+        parts.push(part.clone());
+
         composite_file.parts.push(part);
 
         number_part += 1;
         f.consume(buffer_bytes_len);
-        println!("5 + часть{}", number_part);
     }
 
-    encode_metafile(&composite_file, &path_for_save)?;
+    let metafile = encode_metafile(&composite_file, &path_for_save)?;
 
-    Ok(())
+    Ok(SeparationFile {
+        filename: composite_file.filename,
+        file_extension: composite_file.file_extension,
+        metafile,
+        parts,
+        options,
+    })
 }
 
 fn encode_part(part_uuid: &str, part_number: u8, data: &[u8], path_for_save: &PathBuf) -> io::Result<FilePart> {
@@ -116,16 +131,17 @@ fn encode_part(part_uuid: &str, part_number: u8, data: &[u8], path_for_save: &Pa
     println!("Файл с частью данными был создан => {}{}", path_for_save.display(), &part_file_name);
 
     Ok(FilePart {
-        part_file,
         hash_bytes,
         part_file_name,
     })
 }
 
-fn encode_metafile(composite_file: &CompositeFile, path_for_save: &PathBuf) -> io::Result<()> {
+fn encode_metafile(composite_file: &CompositeFile, path_for_save: &PathBuf) -> io::Result<String> {
+
+    let metafile_name = format!("{}build_file_{}.meta", path_for_save.display(), composite_file.filename);
 
     let mut metafile = File::create(
-        format!("{}build_file_{}.meta", path_for_save.display(), composite_file.filename)
+        &metafile_name
     )?;
     let source_filename_bytes = composite_file.filename.as_bytes();
     let source_format_bytes =  composite_file.file_extension.as_bytes();
@@ -164,5 +180,5 @@ fn encode_metafile(composite_file: &CompositeFile, path_for_save: &PathBuf) -> i
         )
         .for_each(drop);
 
-    Ok(())
+    Ok(metafile_name)
 }
