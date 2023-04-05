@@ -23,6 +23,7 @@ impl From<VFSError> for CloudError {
 }
 
 pub trait CloudBackend {
+    fn sync_backend(&self) -> Result<(), CloudError>;
     fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
     fn download_file(&self, file: &VFSFile) -> Result<PathBuf, CloudError>;
     fn check_file(&self, file_name: &str) -> bool;
@@ -36,17 +37,19 @@ pub struct Cloud<T: CloudBackend> {
 
 impl<T: CloudBackend> Cloud<T> {
 
-    pub fn new(backend: T) -> Self {
+    pub fn new(backend: T, fs: Option<VirtualFileSystem>) -> Self {
         Cloud {
             fs: RefCell::new(
-                VirtualFileSystem::new(FSOption::default())
+                fs.unwrap_or(
+                    VirtualFileSystem::new(FSOption::default())
+                )
             ),
             backend,
         }
     }
 
     pub fn get_fs_json(&self) -> String {
-        self.fs.borrow().display()
+        serde_json::to_string(&*self.fs.borrow()).unwrap()
     }
 
     pub fn upload_file(&self, file_path: &Path, virtual_path: &Path) -> Result<(), CloudError> {

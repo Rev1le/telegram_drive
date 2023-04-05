@@ -1,12 +1,13 @@
 use std::ffi::{c_double, CStr, CString, c_char};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::thread;
+use std::{fs, thread};
 use std::time::Duration;
 use serde_json::{Value, json};
 use serde::{Serialize, Deserialize};
 use telegram_drive::cloud::{Cloud, CloudError};
 use telegram_drive::TelegramBackend;
+use telegram_drive::virtual_file_system::VirtualFileSystem;
 
 use telegram_drive_core::*;
 
@@ -27,10 +28,16 @@ fn main() {
         }
     ).to_string()).unwrap());
 
+    let mut fs = fs::File::open("fs.txt").unwrap();
+
+    let mut fs_str = String::new();
+    fs.read_to_string(&mut fs_str).unwrap();
+    let vfs = serde_json::from_str::<VirtualFileSystem>(&fs_str).unwrap();
+
     let telegram_backend = TelegramBackend::new();
     println!("Backend has been created!");
 
-    let mut cloud = Cloud::new(telegram_backend);
+    let mut cloud = Cloud::new(telegram_backend, Some(vfs));
 
     cloud.upload_file(Path::new(r"C:\Users\nikiy\Downloads\PLvs8_Kv0hU.jpg"), Path::new("fs://")).unwrap();
 
@@ -40,54 +47,15 @@ fn main() {
 
     cloud.download_file(Path::new(r"fs://PLvs8_Kv0hU")).expect("eewewgwgw");
 
+    let fs_str = cloud.get_fs_json();
+
+    fs::write("fs.txt", fs_str.as_bytes()).unwrap();
+
 
     loop {
 
     }
 }
-
-/*
-    println!("NNNNNNNN\n\n\n\n{:?}\n\n\n\n", TDApp::execute_query(&json!({
-        "@type": "sendMessage",
-        "input_message_content": {
-            "@type": "inputMessageDocument",
-            "document": {
-                "@type": "inputFileLocal",
-                "path": "C:\\Users\\nikiy\\Downloads\\FileSeparation10x64.msi"
-            }
-        }
-
-    }).to_string()).unwrap());
-}
-
-
-"@type": "inputMessageDocument",
-                        "document": {
-                            "@type": "inputFileLocal",
-                            "path": "C:\\Users\\nikiy\\Downloads\\FileSeparation10x64.msi"
-                        }
-
-
-
-"input_message_content": {
-                        "@type": "inputMessageText",
-                        "text": {
-                            "@type": "formattedText",
-                            "entities": [
-                                {
-                                    "@type": "textEntity",
-                                    "length": 61,
-                                    "offset": 0,
-                                    "type": {
-                                        "@type": "textEntityTypeTextUrl",
-                                        "url": "https://ixbt.games/articles/2023/03/29/zapad-proigryvaet-bitvu-rynok-mobilnyx-igr-zaxvatyvaet-kitai.html"
-                                    }
-                                }
-                            ],
-                            "text": "Запад проиграл Востоку. Китай захватывает рынок мобильных игр\n\nВ этом году на рынке мобильных игр ожидаются несколько крупных релизов. Среди самых ожидаемых и заметных: ролевая игра Honkai Starrail от создателей Genshin Impact; Arena Breakout — шутер в стиле Escape from Tarkov от Tencent; Seven Deadly Sins: Origin от Netmarble. И это неполный список. Примечательно то, что все эти будущие хиты издаются азиатскими компаниями! Как получилось, что крупные западные издательства остались позади и способны только разочаровывать?"
-                        }
-                    }
-*/
 
 
 //Обновление =>> {"@client_id":1,"@type":"updateDeleteMessages","chat_id":-1001418440636,"from_cache":true,"is_permanent":false,"message_ids":[14568914944]}

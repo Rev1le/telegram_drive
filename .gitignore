@@ -1,2 +1,6 @@
 /target
 /Cargo.lock
+/.idea
+/.vs
+/td
+/telegram_drive.iml

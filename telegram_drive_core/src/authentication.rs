@@ -22,35 +22,49 @@ pub struct TdlibParameters {
 
 pub fn set_tdlib_parameters(app: &TDApp, parameters: Option<TdlibParameters>) {
 
-    let parametrs = match parameters {
-        Some(_) => Value::Null,
+    println!("Sending TdlibParameters");
+
+    let parameters = match parameters {
+        Some(_) => panic!("Unsupported custom tdlib_parameters"),
         None => {
             json!({
                 "@type": "setTdlibParameters",
-                "use_test_dc": false,
-                "database_directory": "td\\db\\",
-                "files_directory": "td\\file\\",
-                "use_file_database": true,
-                "use_chat_info_database": true,
-                "use_message_database": true,
-                "use_secret_chats": false,
-                "api_id": 28978068,
-                "api_hash": "ba63854dbf668b8a2c8a24330ef6fc5b",
-                "system_language_code": "ru",
-                "device_model": "Desktop",
-                "system_version": "1.0.0",
-                "application_version": "1.0",
-                "enable_storage_optimizer": true,
-                "ignore_file_names": false
+                    "database_directory": "td\\db\\",
+                    "files_directory": "td\\file\\",
+                    "use_file_database": true,
+                    "use_chat_info_database": true,
+                    "use_message_database": true,
+                    "use_secret_chats": false,
+                    "api_id": 28978068,
+                    "api_hash": "ba63854dbf668b8a2c8a24330ef6fc5b",
+                    "system_language_code": "ru",
+                    "device_model": "Desktop",
+                    "system_version": "1.0.0",
+                    "application_version": "1.0",
+                    "enable_storage_optimizer": true
             })
+
+            // json!({
+            //     "@type": "setTdlibParameters",
+            //     "database_directory": "tdlib",
+            //     "use_message_database": true,
+            //     "use_secret_chats": true,
+            //     "api_id": 28978068,
+            //     "api_hash": "ba63854dbf668b8a2c8a24330ef6fc5b",
+            //     "system_language_code": "en",
+            //     "device_model": "Desktop",
+            //     "application_version": "1.0",
+            //     "enable_storage_optimizer": true,
+            // })
         }
     };
-    app.send_query(&parametrs.to_string());
+    app.send_query(&parameters.to_string()).unwrap();
 }
 
 pub fn set_phone_number(app: &TDApp) {
+    std::io::stdout().flush().unwrap();
     println!("Введите свой номер телефона");
-    std::io::stdout().flush();
+    std::io::stdout().flush().unwrap();
 
     let mut phone_input = String::new();
     std::io::stdin().read_line(&mut phone_input).unwrap();

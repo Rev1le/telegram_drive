@@ -16,8 +16,7 @@ type CallbackEvent = Box<dyn FnOnce(&TDApp) -> bool + Send + 'static>;
 
 pub struct TelegramBackend {
     app_thread: JoinHandle<()>,
-    sender: mpsc::Sender<Box<dyn FnOnce(&TDApp) -> bool + Send + 'static>>,
-    files_: Arc<Mutex<HashMap<i64, Value>>>,
+    sender: mpsc::Sender<CallbackEvent>,
     files_receive: mpsc::Receiver<Value>,
     files: RefCell<HashMap<String, i64>>,
 }
@@ -30,7 +29,9 @@ impl TelegramBackend {
         let (sender_files, receive_files) =
             mpsc::channel::<Value>();
 
-        let response_files = Arc::new(Mutex::new(HashMap::default()));
+        let response_files = Arc::new(
+            Mutex::new(HashMap::default())
+        );
         let response_files_cl = Arc::clone(&response_files);
 
         let execution_flag = Arc::new(AtomicBool::new(false));
@@ -45,8 +46,8 @@ impl TelegramBackend {
             app.account_auth();
 
             execution_flag_cl.store(true, Ordering::Relaxed);
-            app.run(2.0, receive_event);
 
+            app.run(2.0, receive_event);
             println!("!!!=> Telegram has been closed <=!!!");
         });
 
@@ -56,7 +57,6 @@ impl TelegramBackend {
                     app_thread: telegram_thread,
                     sender: sender_event,
                     files: RefCell::new(HashMap::default()),
-                    files_: response_files,
                     files_receive: receive_files
                 }
             }
@@ -65,6 +65,10 @@ impl TelegramBackend {
 }
 
 impl CloudBackend for TelegramBackend {
+
+    fn sync_backend(&self) -> Result<(), CloudError> {
+        todo!()
+    }
 
     fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError> {
 
