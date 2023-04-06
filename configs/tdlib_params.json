@@ -1,0 +1,18 @@
+{
+  "@type": "setTdlibParameters",
+  "use_test_dc": false,
+  "database_directory": "td\\db\\",
+  "files_directory": "td\\file\\",
+  "use_file_database": true,
+  "use_chat_info_database": true,
+  "use_message_database": true,
+  "use_secret_chats": false,
+  "api_id": 28978068,
+  "api_hash": "ba63854dbf668b8a2c8a24330ef6fc5b",
+  "system_language_code": "ru",
+  "device_model": "Desktop",
+  "system_version": "1.0.0",
+  "application_version": "1.0",
+  "enable_storage_optimizer": true,
+  "ignore_file_names": false
+}

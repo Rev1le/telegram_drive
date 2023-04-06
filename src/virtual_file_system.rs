@@ -1,5 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Display, Formatter};
+use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter, write};
 use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Deserialize};
@@ -60,6 +60,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Получение файла по вирутальному пути
     pub fn get_file(&self, path: &Path) -> Result<&VFSFile, VFSError> {
         let res_node = self.get_fs_node(path)?;
 
@@ -69,6 +70,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Получение мутабельного файла по вирутальному пути
     pub fn get_mut_file(&mut self, path: &Path) -> Result<&mut VFSFile, VFSError> {
 
         let res_node = self.get_mut_fs_node(path)?;
@@ -79,6 +81,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Получение папки по вирутальному пути
     pub fn get_folder(&self, path: &Path) -> Result<&VFSFolder, VFSError> {
 
         let res_node = self.get_fs_node(path)?;
@@ -89,6 +92,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Получение мутабельной папки по вирутальному пути
     pub fn get_mut_folder(&mut self, path: &Path) -> Result<&mut VFSFolder, VFSError> {
 
         let res_node = self.get_mut_fs_node(path)?;
@@ -99,6 +103,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Добавление файла по виртуальному пути
     pub fn add_file(&mut self, path: &Path, file: VFSFile) -> Result<(), VFSError> {
 
         let folder_for_add = self.get_mut_fs_node(path)?;
@@ -121,6 +126,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Добавление папки по виртуальному пути
     pub fn add_folder(&mut self, path: &Path, folder: VFSFolder) -> Result<(), VFSError> {
         let folder_for_add = self.get_mut_fs_node(path)?;
 
@@ -141,6 +147,7 @@ impl VirtualFileSystem {
         }
     }
 
+    /// Удаление узла у виртуального пути
     pub fn remove_node(&mut self, path: &Path) -> Result<(), VFSError> {
         let mut path = PathBuf::from(path);
         let remove_name = path
@@ -149,26 +156,18 @@ impl VirtualFileSystem {
             .ok_or(VFSError::PathError)?.to_string_lossy().to_string();
         path.pop();
 
-        let res_node = self.get_mut_fs_node(&path)?;
+        let folder = self.get_mut_folder(&path)?;
 
-        match res_node {
-            FileSystemNode::File(_) => return Err(
-                VFSError::NodeNotRemove(
-                    Box::new(VFSError::FolderNotFound)
-                )
-            ),
-            FileSystemNode::Folder(folder) => {
-                folder.children.remove(&remove_name).ok_or(
-                    VFSError::NodeNotRemove(
-                        Box::new(VFSError::NodeNotFound)
-                    )
-                )?;
-            }
-        }
+        folder.children.remove(&remove_name).ok_or(
+            VFSError::NodeNotRemove(
+                Box::new(VFSError::NodeNotFound)
+            )
+        )?;
 
         Ok(())
     }
 
+    /// Получение мутабельного узла виртуального пути
     fn get_mut_fs_node(&mut self, path: &Path) -> Result<&mut FileSystemNode, VFSError> {
 
         let mut path_iter = path.into_iter();
@@ -192,6 +191,7 @@ impl VirtualFileSystem {
         return output_node.ok_or(VFSError::PathError);
     }
 
+    /// Получение узла виртуального пути
     fn get_fs_node(&self, path: &Path) -> Result<&FileSystemNode, VFSError> {
         let mut path_iter = path.into_iter();
         let mut output_node = self.dirs.get("fs:");
@@ -214,9 +214,11 @@ impl VirtualFileSystem {
 
         return output_node.ok_or(VFSError::PathError);
     }
+}
 
-    pub fn display(&self) -> String {
-        serde_json::to_string(&self).unwrap()
+impl Display for VirtualFileSystem {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", serde_json::to_string(&self).unwrap())
     }
 }
 
@@ -233,7 +235,7 @@ pub enum VFSError {
 }
 
 impl Display for VFSError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
 }

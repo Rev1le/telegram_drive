@@ -27,6 +27,7 @@ pub trait CloudBackend {
     fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
     fn download_file(&self, file: &VFSFile) -> Result<PathBuf, CloudError>;
     fn check_file(&self, file_name: &str) -> bool;
+    fn close(self) -> Result<(), CloudError>;
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +120,7 @@ impl<T: CloudBackend> Cloud<T> {
 
         //fs::remove_dir_all(r"F:\Projects\Rust\telegram_drive\td\file\documents").unwrap();
 
+        fs::remove_dir_all("td/file/documents/").unwrap();
         Ok(PathBuf::new())
     }
 
