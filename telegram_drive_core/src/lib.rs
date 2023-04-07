@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, c_double, c_int, c_void, CStr, CString};
 use std::io::Write;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::cell::{Cell, RefCell};
 use std::{ffi, fs, io};
 use std::async_iter::AsyncIterator;
@@ -27,7 +27,8 @@ use tokio::{
         self as async_fs,
         File as AsyncFile
     },
-    sync::RwLock as AsyncRwLock
+    sync::RwLock as AsyncRwLock,
+    sync::{Mutex as AsyncMutex, OnceCell as AsyncOnceCell}
 };
 
 mod tdjson;
@@ -43,9 +44,8 @@ use error::*;
 #[derive(Debug)]
 pub struct TDApp {
     client_id: i32,
-    are_authorized: bool,
-    current_query_id: u64,
-    error_log_file: AsyncFile,
+    current_query_id: AtomicU64,
+    error_log_file: AsyncMutex<AsyncFile>,
 }
 
 impl TDApp {
@@ -57,13 +57,12 @@ impl TDApp {
             .unwrap()
             .as_secs();
 
-        fs::create_dir("logs");
+        let _ = fs::create_dir("logs");
 
         TDApp {
             client_id: unsafe { td_create_client_id() },
-            are_authorized: false,
-            current_query_id: 0,
-            error_log_file: AsyncFile::create(format!("logs/error_{}.log", time)).await.unwrap()
+            current_query_id: AtomicU64::new(0),
+            error_log_file: AsyncMutex::new(AsyncFile::create(format!("logs/error_{}.log", time)).await.unwrap())
         }
     }
 
@@ -83,11 +82,11 @@ impl TDApp {
         }
     }
 
-    pub async fn receive(&mut self, timeout: f64) -> Option<String> {
+    pub async fn receive(&self, timeout: f64) -> Option<String> {
         self.sync_receive(timeout)
     }
 
-    pub fn sync_receive(&mut self, timeout: f64) -> Option<String> {
+    pub fn sync_receive(&self, timeout: f64) -> Option<String> {
         unsafe {
             let response = td_receive(timeout);
 
@@ -99,7 +98,7 @@ impl TDApp {
         }
     }
 
-    pub async fn send_query(&mut self, request: &str) -> Result<(), std::ffi::NulError> {
+    pub async fn send_query(&self, request: &str) -> Result<(), std::ffi::NulError> {
         unsafe {
             td_send(
                 self.client_id,
@@ -107,12 +106,18 @@ impl TDApp {
             );
         }
 
-        self.current_query_id += 1;
+        self.current_query_id.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
     }
 
-    pub async fn account_auth(&mut self) -> Result<(), TDAppError> {
+    pub async fn skip_all_update(&self, timeout: f64) {
+        while let Some(update) = self.receive(timeout).await {
+            println!("Update ==> {update}");
+        }
+    }
+
+    pub async fn account_auth(&self) -> Result<(), TDAppError> {
 
         println!("Авторизация...");
         async_io::stdout().flush().await?;
@@ -127,7 +132,9 @@ impl TDApp {
             &authentication::get_tdlib_params_request(None)
         ).await.expect("Строка содержала нулебой байт");
 
-        while !self.are_authorized {
+        let mut are_authorized = false;
+
+        while !are_authorized {
             if let Some(response) = self.receive(1.0).await {
 
                 let json = serde_json::from_str::<Value>(&response)
@@ -179,14 +186,13 @@ impl TDApp {
 
                     "authorizationStateReady" => {
                         println!("|==|==|==> Authorization is completed <==|==|==|");
-
-                        self.are_authorized = true;
+                        are_authorized = true;
                         continue;
                     },
+
                     "authorizationStateClosed" => println!("Обновление статуса авторизации: {}", json),
                     "authorizationStateClosing" => println!("Обновление статуса авторизации: {}", json),
                     "authorizationStateLoggingOut" => {
-                        self.are_authorized = false;
                         println!("|==|==|==> Logging out <==|==|==|")
                     },
                     "authorizationStateWaitEncryptionKey" => println!("Обновление статуса авторизации: {}", json),
@@ -200,7 +206,7 @@ impl TDApp {
         Ok(())
     }
 
-    async fn error_handling(&mut self, json: &Value) -> io::Result<()> {
+    async fn error_handling(&self, json: &Value) -> Result<(), TDAppError> {
 
         println!("----------------------------------\nFOUND ERROR: {}\n", json);
 
@@ -216,23 +222,20 @@ impl TDApp {
             _ => println!("Unsupported telegram error")
         }
 
-        return self.error_log_file
-            .write_all(
-                format!("\nError ==> {json}\n|").as_bytes()
-            ).await
+        let mut log_file = self.error_log_file.lock().await;
 
+        log_file.write_all(
+            format!("\nError ==> {json}\n|").as_bytes()
+        ).await?;
+
+        return Ok(())
     }
 
-    pub async fn get_chat(&mut self, chat_id: i64) -> Value {
+    pub async fn get_chat(&self, chat_id: i64) -> Value {
         self.send_query(&json!({
             "@type": "getChat",
             "chat_id": chat_id
         }).to_string()).await.unwrap();
-
-        // self.send_query(&json!({
-        //     "@type": "loadChats",
-        //     "limit": 10
-        // }).to_string()).await.unwrap();
 
         loop {
             if let Some(response) = self.receive(1.0).await {
@@ -244,9 +247,9 @@ impl TDApp {
                     self.error_handling(&json).await.unwrap();
                 }
 
-                if json["@type"] == "chat" {
+                if json["@type"] == "chat" && json["id"].as_i64().unwrap() == chat_id {
                     println!("chat: {}\n", json);
-                    panic!("CONTROLL")
+                    return json
                 } else {
                     println!("Update: {}\n", json);
                 }
@@ -254,7 +257,7 @@ impl TDApp {
         }
     }
 
-    pub async fn load_messages(&mut self, chat_id: i64) -> Vec<Value> {
+    pub async fn load_messages(&self, chat_id: i64) -> Vec<Value> {
         self.send_query(&json!({
             "@type": "getChatHistory",
             "chat_id": chat_id,
@@ -263,15 +266,14 @@ impl TDApp {
 
         let mut chat_all_messages = vec![];
 
-        while let Some(json_update) = self.next() {
+        while let Some(json_update) = self.next_update_json() {
 
             if json_update["@type"] == "messages" {
 
                 let total_count = json_update["total_count"].as_u64().unwrap();
 
                 if total_count <= 0 {
-                    println!("Сообщений больще нет");
-
+                    println!("Сообщений больше нет: {}", json_update);
                     return chat_all_messages
                 }
 
@@ -300,52 +302,9 @@ impl TDApp {
         }
 
         vec![]
-
-        /*
-        loop {
-            if let Some(response) = self.receive(1.0).await {
-
-                let json = serde_json::from_str::<Value>(&response)
-                    .expect("TDLib прислал невалидный json");
-
-                if json["@type"] == "error" {
-                    self.error_handling(&json).await.unwrap();
-                }
-
-                if json["@type"] == "messages" {
-
-                    let total_count = json["total_count"].as_u64().unwrap();
-
-                    if total_count <= 0 {
-                        println!("Сообщений больще нет");
-
-                        return chat_all_messages
-                    }
-
-                    let messages = json["messages"].as_array().unwrap();
-                    chat_all_messages.extend_from_slice(&messages);
-
-                    println!("messages: {}\n", json);
-
-                    let last_message_id = messages.last().unwrap()["id"].as_i64().unwrap();
-
-                    self.send_query(&json!({
-                        "@type": "getChatHistory",
-                        "chat_id": chat_id,
-                        "limit": 30,
-                        "from_message_id": last_message_id
-                    }).to_string()).await.unwrap();
-
-                } else {
-                    //println!("Update: {}\n", json);
-                }
-            }
-        }
-
-         */
     }
 
-    pub async fn get_message(&mut self, message_id: i64, chat_id: i64) -> Value {
+    pub async fn get_message(&self, message_id: i64, chat_id: i64) -> Value {
 
         self.send_query(&json!({
             "@type": "getMessage",
@@ -372,12 +331,46 @@ impl TDApp {
             }
         }
     }
-}
 
-impl Iterator for TDApp {
-    type Item = Value;
+    pub async fn download_file(&self, file_id: i64) {
 
-    fn next(&mut self) -> Option<Self::Item> {
+        self.send_query(&json!({
+            "@type": "downloadFile",
+            "file_id": file_id,
+            "priority": 1
+        }).to_string()).await.unwrap();
+
+        let mut download_file_expected_size = 0;
+
+        while let Some(json_update) = self.next_update_json() {
+
+            match json_update["@type"].as_str().unwrap() {
+
+                "file" => {
+                    if json_update["id"] == file_id {
+                        download_file_expected_size = json_update["expected_size"].as_u64().unwrap();
+                    }
+
+                    println!("{}", json_update);
+                },
+
+                "updateFile" => {
+                    println!("FileUpdates: {}\n", json_update);
+
+                    if
+                        json_update["file"]["id"] == file_id &&
+                        json_update["file"]["local"]["is_downloading_completed"].as_bool().unwrap() &&
+                        json_update["file"]["local"]["downloaded_size"] == download_file_expected_size
+                    {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn next_update_json(&self) -> Option<Value> {
         if let Some(response) = self.sync_receive(1.0) {
 
             let json = serde_json::from_str::<Value>(&response)
@@ -393,12 +386,3 @@ impl Iterator for TDApp {
         None
     }
 }
-
-// impl IntoIterator for &mut TDApp {
-//     type Item = Value;
-//     type IntoIter = Self;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self
-//     }
-// }

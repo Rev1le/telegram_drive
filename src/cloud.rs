@@ -32,7 +32,7 @@ pub trait CloudBackend {
 
 #[async_trait::async_trait]
 pub trait AsyncCloudBackend {
-    async fn sync_backend(&self) -> Result<(), CloudError>;
+    async fn load_backend(&self) -> Result<(), CloudError>;
     async fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
     async fn download_file(&self, file: &VFSFile) -> Result<PathBuf, CloudError>;
     async fn check_file(&self, file_name: &str) -> bool;
