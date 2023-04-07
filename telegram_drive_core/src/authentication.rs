@@ -20,11 +20,10 @@ pub struct TdlibParameters {
     ignore_file_names: Option<bool>
 }
 
-pub fn set_tdlib_parameters(app: &TDApp, parameters: Option<TdlibParameters>) {
+/// Получение `setTdlibParameters` запроса
+pub fn get_tdlib_params_request(custom_parameters: Option<TdlibParameters>) -> String {
 
-    println!("Sending TdlibParameters");
-
-    let parameters = match parameters {
+    let parameters = match custom_parameters {
         Some(_) => panic!("Unsupported custom tdlib_parameters"),
         None => {
             json!({
@@ -43,25 +42,13 @@ pub fn set_tdlib_parameters(app: &TDApp, parameters: Option<TdlibParameters>) {
                     "application_version": "1.0",
                     "enable_storage_optimizer": true
             })
-
-            // json!({
-            //     "@type": "setTdlibParameters",
-            //     "database_directory": "tdlib",
-            //     "use_message_database": true,
-            //     "use_secret_chats": true,
-            //     "api_id": 28978068,
-            //     "api_hash": "ba63854dbf668b8a2c8a24330ef6fc5b",
-            //     "system_language_code": "en",
-            //     "device_model": "Desktop",
-            //     "application_version": "1.0",
-            //     "enable_storage_optimizer": true,
-            // })
         }
     };
-    app.send_query(&parameters.to_string()).unwrap();
+    return parameters.to_string();
 }
 
-pub fn set_phone_number(app: &TDApp) {
+/// Получение `setAuthenticationPhoneNumber` запроса
+pub fn get_phone_number_request() -> String {
     std::io::stdout().flush().unwrap();
     println!("Введите свой номер телефона");
     std::io::stdout().flush().unwrap();
@@ -69,26 +56,28 @@ pub fn set_phone_number(app: &TDApp) {
     let mut phone_input = String::new();
     std::io::stdin().read_line(&mut phone_input).unwrap();
 
-    app.send_query(&json!({
+    json!({
         "@type": "setAuthenticationPhoneNumber",
         "phone_number": phone_input
-    }).to_string()).unwrap();
+    }).to_string()
 }
 
-pub fn check_code(app: &TDApp) {
+/// Получение `checkAuthenticationCode` запроса
+pub fn get_check_code_request() -> String {
     println!("Введите код");
     std::io::stdout().flush().unwrap();
 
     let mut code_input = String::new();
     std::io::stdin().read_line(&mut code_input).unwrap();
 
-    app.send_query(&json!({
+        json!({
         "@type": "checkAuthenticationCode",
         "code": code_input
-    }).to_string()).unwrap();
+    }).to_string()
 }
 
-pub fn check_password(app: &TDApp) {
+/// Получение `checkAuthenticationPassword` запроса
+pub fn get_check_password_request() -> String {
     println!("Введите пароль");
     std::io::stdout().flush().unwrap();
 
@@ -99,8 +88,8 @@ pub fn check_password(app: &TDApp) {
         .trim_matches(|c: char| c.is_whitespace())
         .to_string();
 
-    app.send_query(&json!({
+    json!({
         "@type": "checkAuthenticationPassword",
         "password": password_input
-    }).to_string()).unwrap();
+    }).to_string()
 }

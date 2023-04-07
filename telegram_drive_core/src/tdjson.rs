@@ -19,5 +19,4 @@ extern "C" {
 
 fn td_log_message_callback_ptr(verbosity_level: c_int, message: *const c_char) -> () {
     println!("{:?} - {:?}", verbosity_level, message);
-    //return c_void
 }

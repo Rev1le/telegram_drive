@@ -5,6 +5,7 @@ pub mod telegram_backend;
 #[cfg(test)]
 mod test {
     use std::path::Path;
+    use crate::telegram_backend::TelegramBackend;
     use crate::virtual_file_system::{VFSFile, VFSFolder};
     use super::virtual_file_system::{FSOption, VirtualFileSystem};
 
@@ -50,5 +51,14 @@ mod test {
 
         //println!("{:#}", &fs);
         //println!("{:#}", serde_json::to_value(&fs).unwrap());
+    }
+
+    #[test]
+    fn tg_backend() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let telegram_backend = TelegramBackend::new().await;
+        });
     }
 }
