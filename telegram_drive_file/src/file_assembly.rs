@@ -95,9 +95,9 @@ fn decode_str<T: DecodeType + Into<usize>>(iter: &mut impl Iterator<Item=u8>) ->
     Ok(String::from_utf8(output_str_bytes)?)
 }
 
-pub fn decode_file(path: &PathBuf, path_for_save: PathBuf) -> Result<(), DecodeErrors> {
+pub fn decode_file(metafile_path: &PathBuf, path_for_save: PathBuf) -> Result<(), DecodeErrors> {
 
-    if !path.is_file() {
+    if !metafile_path.is_file() {
         println!(
             "\n!!!!!!!!!!!!!\nПредоставьте путь к файлу сборки\n!!!!!!!!!!!!!\n"
         );
@@ -108,11 +108,11 @@ pub fn decode_file(path: &PathBuf, path_for_save: PathBuf) -> Result<(), DecodeE
         return Err(DecodeErrors::PathParseError)
     }
 
-    let mut parts_folder = path.clone();
+    let mut parts_folder = metafile_path.clone();
     parts_folder.pop();
 
     let mut metafile_bytes = vec![];
-    File::open(&path)?.read_to_end(&mut metafile_bytes)?;
+    File::open(&metafile_path)?.read_to_end(&mut metafile_bytes)?;
 
     let mut metafile_bytes_iter = metafile_bytes.into_iter();
 

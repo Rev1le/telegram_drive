@@ -62,7 +62,9 @@ impl TDApp {
         TDApp {
             client_id: unsafe { td_create_client_id() },
             current_query_id: AtomicU64::new(0),
-            error_log_file: AsyncMutex::new(AsyncFile::create(format!("logs/error_{}.log", time)).await.unwrap())
+            error_log_file: AsyncMutex::new(
+                AsyncFile::create(format!("logs/error_{}.log", time)).await.unwrap()
+            )
         }
     }
 
@@ -109,6 +111,22 @@ impl TDApp {
         self.current_query_id.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
+    }
+
+    fn next_update_json(&self) -> Option<Value> {
+        if let Some(response) = self.sync_receive(1.0) {
+
+            let json = serde_json::from_str::<Value>(&response)
+                .expect("TDLib прислал невалидный json");
+
+            if json["@type"] == "error" {
+                futures::executor::block_on(self.error_handling(&json)).unwrap();
+            }
+
+            return Some(json)
+        }
+
+        None
     }
 
     pub async fn skip_all_update(&self, timeout: f64) {
@@ -231,6 +249,43 @@ impl TDApp {
         return Ok(())
     }
 
+    pub async fn get_me(&self) -> Value {
+        self.send_query(&json!({
+            "@type": "getMe"
+        }).to_string()).await.unwrap();
+
+        while let Some(json_response) = self.next_update_json() {
+            if json_response["@type"].as_str().unwrap() == "user" {
+                return json_response
+            }
+        }
+        Value::Null
+    }
+
+    pub async fn create_chat(&self) -> Value {
+
+        let my_acc = self.get_me().await;
+
+        self.send_query(&dbg!(json!({
+            "@type": "createNewSupergroupChat",
+            "title": "TelegramDrive"
+        }).to_string())).await.unwrap();
+
+        loop {
+            if let Some(response) = self.receive(1.0).await {
+
+                let json = serde_json::from_str::<Value>(&response)
+                    .expect("TDLib прислал невалидный json");
+
+                if json["@type"] == "error" { self.error_handling(&json).await.unwrap(); }
+
+                if json["@type"].as_str().unwrap() == "chat" {
+                    return json;
+                }
+            }
+        }
+    }
+
     pub async fn get_chat(&self, chat_id: i64) -> Value {
         self.send_query(&json!({
             "@type": "getChat",
@@ -257,7 +312,7 @@ impl TDApp {
         }
     }
 
-    pub async fn load_messages(&self, chat_id: i64) -> Vec<Value> {
+    pub async fn load_all_messages(&self, chat_id: i64) -> Vec<Value> {
         self.send_query(&json!({
             "@type": "getChatHistory",
             "chat_id": chat_id,
@@ -332,7 +387,47 @@ impl TDApp {
         }
     }
 
-    pub async fn download_file(&self, file_id: i64) {
+    pub async fn upload_file(&self, file_path: &Path, chat_id: i64) -> (i64, Value) {
+
+        self.send_query(&json!({
+                    "@type": "sendMessage",
+                    "chat_id": chat_id,
+                    "input_message_content": {
+                        "@type": "inputMessageDocument",
+                        "document": {
+                            "@type": "inputFileLocal",
+                            "path": dbg!(file_path.display().to_string())
+                        }
+                    }
+                }).to_string()).await.unwrap();
+
+
+        // Возможны проблемы с парсингом json
+        // Сделать проверку LocalFile.path == file_path
+
+        println!("Запрос на отправку файла отправлен.");
+
+        while let Some(json_update) = self.next_update_json() {
+
+            match json_update["@type"].as_str().unwrap() {
+                "updateFile" => {
+                    println!("FileUpdates: {}\n", json_update);
+                }
+                "updateMessageSendSucceeded" => {
+
+                    //let file_id = json_update["message"]["content"]["document"]["id"].as_i64().unwrap();
+
+                    println!("FULFILE: {}\n", json_update);
+                    return (2, json_update)
+                }
+
+                _ => {}
+            }
+        }
+        panic!("Не удалось загрузить файл")
+    }
+
+    pub async fn download_file(&self, file_id: i64) -> Result<Value, ()> {
 
         self.send_query(&json!({
             "@type": "downloadFile",
@@ -350,6 +445,9 @@ impl TDApp {
                     if json_update["id"] == file_id {
                         download_file_expected_size = json_update["expected_size"].as_u64().unwrap();
                     }
+                    if json_update["local"]["is_downloading_completed"].as_bool().unwrap() {
+                        return Ok(json_update);
+                    }
 
                     println!("{}", json_update);
                 },
@@ -362,27 +460,23 @@ impl TDApp {
                         json_update["file"]["local"]["is_downloading_completed"].as_bool().unwrap() &&
                         json_update["file"]["local"]["downloaded_size"] == download_file_expected_size
                     {
-                        return;
+                        return Ok(json_update);
                     }
                 }
                 _ => {}
             }
         }
+        Err(())
     }
 
-    fn next_update_json(&self) -> Option<Value> {
-        if let Some(response) = self.sync_receive(1.0) {
+    pub async fn delete_message(&self, chat_id: i64, vec_message_id: &[i64]) -> Result<(), ()> {
+        self.send_query(&json!({
+            "@type": "deleteMessages",
+            "chat_id": chat_id,
+            "message_ids": vec_message_id,
+            "revoke": true
+        }).to_string()).await.unwrap();
 
-            let json = serde_json::from_str::<Value>(&response)
-                .expect("TDLib прислал невалидный json");
-
-            if json["@type"] == "error" {
-                futures::executor::block_on(self.error_handling(&json)).unwrap();
-            }
-
-            return Some(json)
-        }
-
-        None
+        Ok(())
     }
 }

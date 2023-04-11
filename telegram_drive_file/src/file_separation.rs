@@ -40,10 +40,13 @@ pub struct SeparationFile {
 pub fn encode_file(path: &PathBuf, options: Options) -> Result<SeparationFile, EncodeErrors> {
 
     if !path.is_file() {
+        println!("{}", path.display());
         panic!("Предоставьте путь к файлу")
     }
 
     let path_for_save = dbg!(options.clone().path_for_save.unwrap_or(PathBuf::new()));
+
+    println!("{}", path_for_save.is_dir());
 
     if !path_for_save.is_dir() {
         return dbg!(Err(EncodeErrors::PathParseError));
@@ -138,10 +141,11 @@ fn encode_part(part_uuid: &str, part_number: u8, data: &[u8], path_for_save: &Pa
 
 fn encode_metafile(composite_file: &CompositeFile, path_for_save: &PathBuf) -> io::Result<String> {
 
-    let metafile_name = format!("{}build_file_{}.meta", path_for_save.display(), composite_file.filename);
+    let uuid = Uuid::new_v4().to_string();
+    let metafile_name = format!("{}build_file_{}.meta", uuid, composite_file.filename);
 
     let mut metafile = File::create(
-        &metafile_name
+        format!("{}{}", path_for_save.display(), &metafile_name)
     )?;
     let source_filename_bytes = composite_file.filename.as_bytes();
     let source_format_bytes =  composite_file.file_extension.as_bytes();

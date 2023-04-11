@@ -1,136 +1,92 @@
 use std::cell::RefCell;
-use std::{fs, thread};
+use std::{fs, io, thread};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use crate::virtual_file_system::{VirtualFileSystem, FSOption, FileSystemNode, VFSError, VFSFile, VFSFolder};
-use crate::virtual_file_system::FileSystemNode::File;
+use std::fs::File;
+use std::io::{ErrorKind, Read, Write};
 
-use telegram_drive_file::*;
+use telegram_drive_file::{Options as SeparationOptions, *};
+use telegram_drive_file::file_separation::{EncodeErrors, SeparationFile};
+use crate::cloud_backend::{AsyncCloudBackend, CloudBackend};
 
 #[derive(Debug)]
 pub enum CloudError {
     IOError(std::io::Error),
-    Test
+    EncodeError(EncodeErrors),
+    VFSError(VFSError),
 }
 
 impl From<VFSError> for CloudError {
     fn from(value: VFSError) -> Self {
-        return match value {
-            VFSError::Test => CloudError::Test,
-            _ => {panic!("Unsupported errors")}
-        }
+        Self::VFSError(value)
     }
 }
-
-pub trait CloudBackend {
-    fn sync_backend(&self) -> Result<(), CloudError>;
-    fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
-    fn download_file(&self, file: &VFSFile) -> Result<PathBuf, CloudError>;
-    fn check_file(&self, file_name: &str) -> bool;
-    fn close(self) -> Result<(), CloudError>;
-}
-
-#[async_trait::async_trait]
-pub trait AsyncCloudBackend {
-    async fn load_backend(&self) -> Result<(), CloudError>;
-    async fn upload_file(&self, file_path: PathBuf) -> Result<(), CloudError>;
-    async fn download_file(&self, file: &VFSFile) -> Result<PathBuf, CloudError>;
-    async fn check_file(&self, file_name: &str) -> bool;
-    async fn close(self) -> Result<(), CloudError>;
+impl From<EncodeErrors> for CloudError {
+    fn from(value: EncodeErrors) -> Self {
+        Self::EncodeError(value)
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct Cloud<T: CloudBackend> {
-    fs: RefCell<VirtualFileSystem>,
-    backend: T
+struct CloudOptions {
+    work_dir: PathBuf
 }
 
-impl<T: CloudBackend> Cloud<T> {
+#[derive(Debug, Clone)]
+pub struct Cloud<T: AsyncCloudBackend> {
+    fs: RefCell<VirtualFileSystem>,
+    backend: T,
+    option: CloudOptions,
+}
 
-    pub fn new(backend: T, fs: Option<VirtualFileSystem>) -> Self {
+impl<T: AsyncCloudBackend> Cloud<T> {
+
+    pub fn new() -> Self {
+
+        let try_open_vfs = File::open("vfs.json");
+
+        let vfs_from_backup =
+            match try_open_vfs {
+                Ok(mut f) => serde_json::from_reader::<File, VirtualFileSystem>(f).unwrap(),
+
+                Err(e) => match e.kind() {
+                    ErrorKind::NotFound => VirtualFileSystem::new(FSOption::default()),
+                    _ => panic!("{}", e)
+                }
+            };
+
         Cloud {
-            fs: RefCell::new(
-                fs.unwrap_or(
-                    VirtualFileSystem::new(FSOption::default())
-                )
-            ),
-            backend,
+            fs: RefCell::new(vfs_from_backup),
+            backend: T::create(),
+            option: CloudOptions {
+                work_dir: PathBuf::from("./td/file/documents/")
+            },
         }
     }
 
-    pub fn get_fs_json(&self) -> String {
-        serde_json::to_string(&*self.fs.borrow()).unwrap()
-    }
-
-    pub fn upload_file(&self, file_path: &Path, virtual_path: &Path) -> Result<(), CloudError> {
-
-        let file_path = PathBuf::from(file_path);
-
-        let path_for_save_parts = PathBuf::from(r"W:\tmp_tel_drive\");
-
-        let options_encode = Options {
-            path_for_save: Some(path_for_save_parts.clone()),
-            count_parts: None,
-            part_size: None,
-            compressed: None,
-        };
-
-        let separation_file = file_separation::encode_file(
-            &file_path,
-            options_encode
-        ).unwrap();
-
-        let mut parts_name = vec![];
-
-        for part in &separation_file.parts {
-            println!("Найден файл: {:?}", part);
-
-            parts_name.push(part.part_file_name.clone());
-
-            let mut part_path = path_for_save_parts.clone();
-            part_path.push(part.part_file_name.clone());
-
-            self.backend.upload_file(part_path.clone()).unwrap();
-
-            fs::remove_file(&part_path).unwrap();
-        }
-
-        let mut metafile_path = path_for_save_parts.clone();
-        metafile_path.push(&separation_file.metafile);
-
-        self.backend.upload_file(metafile_path.clone()).unwrap();
-
-        fs::remove_file(&metafile_path).unwrap();
-
-        let _ = self.fs.borrow_mut().add_file(virtual_path, VFSFile {
-            name: separation_file.filename.clone(),
-            extension: separation_file.file_extension.clone(),
-            build_metafile: PathBuf::from(separation_file.metafile.clone()).file_name().unwrap().to_string_lossy().to_string(),
-            parts_name,
-            metadata: Default::default(),
-        }).unwrap();
-
-        println!("Выгрузка файла завершена");
+    fn save_vfs(&self) -> io::Result<()> {
+        // let result_f = dbg!(File::open("vfs.json"));
+        // match result_f {
+        //     Ok(mut f) => {
+        //         f.write_all(&vec![]).unwrap();
+        //     }
+        //     Err(e) => match e.kind() {
+        //         ErrorKind::NotFound => {
+        //             let vfs_json = serde_json::to_string(&*self.fs.borrow()).unwrap();
+        //             fs::write("vfs.json", vfs_json.as_bytes())?;
+        //         }
+        //         _ => return Err(e)
+        //     }
+        // }
+        let vfs_json = serde_json::to_string(&*self.fs.borrow()).unwrap();
+        fs::write("vfs.json", vfs_json.as_bytes())?;
 
         Ok(())
     }
 
-    pub fn download_file(&self, file_path: &Path) -> Result<PathBuf, CloudError> {
-
-        let virtual_fs = self.fs.borrow();
-        let file = dbg!(virtual_fs.get_file(file_path))?;
-        let metafile_path = self.backend.download_file(file).expect("gwgwgwg");
-
-
-        file_assembly::decode_file(
-            &metafile_path,
-            PathBuf::from(r"F:\Projects\")
-        ).expect("defoceed_File");
-
-        //fs::remove_dir_all(r"F:\Projects\Rust\telegram_drive\td\file\documents").unwrap();
-
-        fs::remove_dir_all("td/file/documents/").unwrap();
-        Ok(PathBuf::new())
+    pub fn get_fs_json(&self) -> String {
+        serde_json::to_string(&*self.fs.borrow()).unwrap()
     }
 
     pub fn get_file(&self, path: &Path) -> Result<VFSFile, CloudError> {
@@ -148,19 +104,118 @@ impl<T: CloudBackend> Cloud<T> {
             .map(|folder| folder.clone())
             .map_err(|err|err.into())
     }
+
+    pub async fn async_upload_file(
+        &self,
+        file_path: &PathBuf,
+        virtual_path: &Path
+    ) -> Result<(), CloudError> {
+        use telegram_drive_file::file_separation;
+
+        let options = SeparationOptions {
+            path_for_save: Some(self.option.work_dir.clone()),
+            count_parts: None,
+            part_size: None,
+            compressed: None,
+        };
+
+        let separation_file =
+            dbg!(file_separation::encode_file(dbg!(file_path), options)?);
+
+        self.add_file_to_vfs(&separation_file, virtual_path)?;
+
+        for part_file in &separation_file.parts {
+
+            let mut part_path = self.option.work_dir.clone();
+            part_path.push(&part_file.part_file_name);
+
+            self.backend.upload_file(&part_path).await?;
+        }
+
+        let mut metafile_path = self.option.work_dir.clone();
+        metafile_path.push(&separation_file.metafile);
+
+        self.backend.upload_file(&metafile_path).await?;
+
+        self.save_vfs().unwrap();
+        return Ok(());
+    }
+
+    pub async fn async_download_file(&self, virtual_path: &Path) -> Result<PathBuf, CloudError> {
+        use telegram_drive_file::file_assembly;
+
+        let v_fs = self.fs.borrow();
+        let v_file = v_fs.get_file(virtual_path)?;
+
+        for part in &v_file.parts_name {
+
+            let part_path = format!("{}{}", self.option.work_dir.display(), part);
+            let _ = self.backend.download_file(Path::new(&part_path)).await.unwrap();
+        }
+        let _ = self.backend.download_file(Path::new(&v_file.build_metafile)).await.unwrap();
+
+        let metafile_path = format!("{}{}", self.option.work_dir.display(), v_file.build_metafile);
+
+        //let metafile_path = format!("{}{}", self.option.work_dir.display(), v_file.build_metafile);
+        let output_file = file_assembly::decode_file(
+            &PathBuf::from(&metafile_path),
+            PathBuf::from(&self.option.work_dir)
+        ).unwrap();
+
+        self.save_vfs().unwrap();
+
+        Ok(PathBuf::from(format!(
+            "{}{}.{}",
+            self.option.work_dir.display(),
+            v_file.name,
+            v_file.extension
+        )))
+    }
+
+    fn add_file_to_vfs(&self, separation_file: &SeparationFile, virtual_path: &Path) -> Result<(), VFSError> {
+        let parts_name = separation_file.parts
+            .iter()
+            .map(|part| part.part_file_name.clone())
+            .collect::<Vec<String>>();
+
+        let metafile_name = separation_file.metafile.clone();
+
+        let v_file = VFSFile {
+            name: separation_file.filename.clone(),
+            extension: separation_file.file_extension.clone(),
+            build_metafile: metafile_name,
+            parts_name,
+            metadata: Default::default(),
+        };
+
+        let res = self.fs.borrow_mut().add_file(virtual_path, v_file);
+
+        self.save_vfs().unwrap();
+
+        return res;
+    }
+
+    pub fn remove_file(&self, path_file: &Path) -> Result<(), CloudError> {
+        let res = self.fs
+            .borrow_mut()
+            .remove_node(path_file)
+            .map_err(|e| e.into());
+
+        self.save_vfs().unwrap();
+
+        return res;
+    }
+
+    pub fn remove_folder(&self, path_file: &Path) -> Result<(), CloudError> {
+        let res = self.fs
+            .borrow_mut()
+            .remove_node(path_file)
+            .map_err(|e| e.into());
+
+        self.save_vfs().unwrap();
+
+        return res;
+    }
 }
 
 // META файл именуется одинаково (при загрузке одинаковых файлов идет перезапись meta файла)
-
-/*
-let callback = |app: &TDApp| {
-            app.check_file("d");
-            if let Ok(_) = app.upload_file(PathBuf::new()) {
-                true
-            } else {
-                false
-            }
-        };
-
-        sender.send(Box::new(callback)).unwrap();
- */

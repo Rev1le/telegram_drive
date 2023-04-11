@@ -1,6 +1,7 @@
 pub mod cloud;
 pub mod virtual_file_system;
 pub mod telegram_backend;
+pub mod cloud_backend;
 
 #[cfg(test)]
 mod test {

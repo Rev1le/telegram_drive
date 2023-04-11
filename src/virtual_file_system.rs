@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fmt::{self, Display, Formatter, write};
 use std::path::{Path, PathBuf};
 
 use serde::{Serialize, Deserialize};
+use serde::de::Unexpected::Str;
 use serde_json::Error;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -38,8 +40,8 @@ pub struct VFSFolder {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtualFileSystem {
-    dirs: HashMap<String, FileSystemNode>,
-    options: FSOption,
+    pub dirs: HashMap<String, FileSystemNode>,
+    pub options: FSOption,
 }
 
 impl VirtualFileSystem {
@@ -62,45 +64,42 @@ impl VirtualFileSystem {
 
     /// Получение файла по вирутальному пути
     pub fn get_file(&self, path: &Path) -> Result<&VFSFile, VFSError> {
-        let res_node = self.get_fs_node(path)?;
 
-        return match res_node {
+        return match self.get_fs_node(path)? {
             FileSystemNode::File(file) => Ok(file),
             FileSystemNode::Folder(_) => return Err(VFSError::FileNotFound)
         }
+
     }
 
     /// Получение мутабельного файла по вирутальному пути
     pub fn get_mut_file(&mut self, path: &Path) -> Result<&mut VFSFile, VFSError> {
 
-        let res_node = self.get_mut_fs_node(path)?;
-
-        return match res_node {
+        return match self.get_mut_fs_node(path)? {
             FileSystemNode::File(file) => Ok(file),
             FileSystemNode::Folder(_) => return Err(VFSError::FileNotFound)
         }
+
     }
 
     /// Получение папки по вирутальному пути
     pub fn get_folder(&self, path: &Path) -> Result<&VFSFolder, VFSError> {
 
-        let res_node = self.get_fs_node(path)?;
-
-        return match res_node {
+        return match self.get_fs_node(path)? {
             FileSystemNode::File(_) => Err(VFSError::FolderNotFound),
             FileSystemNode::Folder(folder) => Ok(folder)
         }
+
     }
 
     /// Получение мутабельной папки по вирутальному пути
     pub fn get_mut_folder(&mut self, path: &Path) -> Result<&mut VFSFolder, VFSError> {
 
-        let res_node = self.get_mut_fs_node(path)?;
-
-        return match res_node {
+        return match self.get_mut_fs_node(path)? {
             FileSystemNode::File(_) => Err(VFSError::FolderNotFound),
             FileSystemNode::Folder(folder) => Ok(folder)
         }
+
     }
 
     /// Добавление файла по виртуальному пути
@@ -122,38 +121,41 @@ impl VirtualFileSystem {
 
                 Ok(())
             }
-            FileSystemNode::File { .. } => Err(VFSError::PathError)
+            FileSystemNode::File { .. } =>
+                Err(VFSError::PathError {
+                    message: String::from("Передан путь до файла, а не до директории.")
+                })
         }
     }
 
     /// Добавление папки по виртуальному пути
     pub fn add_folder(&mut self, path: &Path, folder: VFSFolder) -> Result<(), VFSError> {
-        let folder_for_add = self.get_mut_fs_node(path)?;
 
-        return match folder_for_add {
-            FileSystemNode::Folder(fol) => {
+        let current_folder = self.get_mut_folder(path)?;
 
-                if fol.children.contains_key(&folder.name) {
-                    return Err(VFSError::FolderAlreadyExists);
-                }
-
-                fol.children.insert(
-                    folder.name.clone(),
-                    FileSystemNode::Folder(folder)
-                );
-                Ok(())
-            }
-            FileSystemNode::File { .. } => Err(VFSError::Test)
+        if current_folder.children.contains_key(&folder.name) {
+            return Err(VFSError::FolderAlreadyExists);
         }
+
+        current_folder.children.insert(
+            folder.name.clone(),
+            FileSystemNode::Folder(folder)
+        );
+
+        Ok(())
     }
 
     /// Удаление узла у виртуального пути
     pub fn remove_node(&mut self, path: &Path) -> Result<(), VFSError> {
+
         let mut path = PathBuf::from(path);
+
         let remove_name = path
             .iter()
             .last()
-            .ok_or(VFSError::PathError)?.to_string_lossy().to_string();
+            .ok_or(VFSError::PathError {message: String::from("Элемент удаления не найден в пути")})?
+            .to_string_lossy()
+            .to_string();
         path.pop();
 
         let folder = self.get_mut_folder(&path)?;
@@ -171,48 +173,85 @@ impl VirtualFileSystem {
     fn get_mut_fs_node(&mut self, path: &Path) -> Result<&mut FileSystemNode, VFSError> {
 
         let mut path_iter = path.into_iter();
-        let mut output_node = self.dirs.get_mut("fs:");
 
-        path_iter.next();
+        let root_node_name = path_iter.next().ok_or(
+            VFSError::PathError {
+                message: String::from("Передан пустой путь!!")
+            }
+        )?;
+
+        if root_node_name != OsStr::new("fs:") {
+            return Err(VFSError::PathError {
+                message: String::from("Корень пути не соответсвует fs://")
+            })
+        }
+
+        let mut current_node = self.dirs.get_mut("fs:").unwrap();
 
         for path_part in path_iter {
+
             let path_part = &*path_part.to_string_lossy();
 
-            match output_node.ok_or(VFSError::PathError)? {
+            match current_node {
 
                 &mut FileSystemNode::Folder (ref mut folder) => {
-                    output_node = folder.children.get_mut(path_part);
+
+                    current_node = folder.children
+                        .get_mut(path_part)
+                        .ok_or(VFSError::PathError {
+                            message: String::from("VFS не содержи узла пути")
+                        })?;
                 },
 
-                _ => return Err(VFSError::PathError)
+                _ => return Err(VFSError::PathError {
+                    message: String::from("Узел пути представляет файл, ожидалась папка")
+                })
             }
         }
 
-        return output_node.ok_or(VFSError::PathError);
+        return Ok(current_node);
     }
 
     /// Получение узла виртуального пути
     fn get_fs_node(&self, path: &Path) -> Result<&FileSystemNode, VFSError> {
         let mut path_iter = path.into_iter();
-        let mut output_node = self.dirs.get("fs:");
 
-        path_iter.next();
+        let root_node_name = path_iter.next().ok_or(
+            VFSError::PathError {
+                message: String::from("Передан пустой путь!!")
+            }
+        )?;
+
+        if root_node_name != OsStr::new("fs:") {
+            return Err(VFSError::PathError {
+                message: String::from("Корень пути не соответсвует fs://")
+            })
+        }
+
+        let mut current_node = self.dirs.get("fs:").unwrap();
 
         for path_part in path_iter {
 
             let path_part = &*path_part.to_string_lossy();
 
-            match output_node.ok_or(VFSError::PathError)? {
+            match current_node {
 
                 &FileSystemNode::Folder (ref folder) => {
-                    output_node = folder.children.get(path_part);
+
+                    current_node = folder.children
+                        .get(path_part)
+                        .ok_or(VFSError::PathError {
+                            message: String::from("VFS не содержи узла пути")
+                        })?;
                 },
 
-                _ => return Err(VFSError::PathError)
+                _ => return Err(VFSError::PathError {
+                    message: String::from("Узел пути представляет файл, ожидалась папка")
+                })
             }
         }
 
-        return output_node.ok_or(VFSError::PathError);
+        return Ok(current_node);
     }
 }
 
@@ -224,15 +263,17 @@ impl Display for VirtualFileSystem {
 
 #[derive(Debug)]
 pub enum VFSError {
-    Test,
     NodeNotFound,
     FolderNotFound,
     FileNotFound,
     NodeNotRemove(Box<dyn std::error::Error + 'static>),
     FileAlreadyExists,
     FolderAlreadyExists,
-    PathError,
+    PathError {
+        message: String,
+    },
 }
+
 
 impl Display for VFSError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
